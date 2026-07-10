@@ -1,0 +1,106 @@
+services:
+  # --- Orquestador: Hermes Agent (imagen oficial, Python) ---
+  hermes:
+    build:
+      context: ./hermes          # imagen base + chromium local + display/noVNC (ver hermes/Dockerfile)
+      dockerfile: Dockerfile
+    image: jobsearch-hermes:local
+    container_name: jobsearch-hermes
+    restart: unless-stopped
+    shm_size: "2gb"              # Chromium se cae con el /dev/shm chico por defecto
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+      - net.ipv6.conf.default.disable_ipv6=1
+    volumes:
+      - hermes_data:/opt/data
+      - ./hermes-skills:/opt/data/skills/custom:ro
+      - ./hermes-files:/opt/data/files          # Miguel deja acá su CV/archivos; Hermes los lee de /opt/data/files
+    environment:
+      - HERMES_HOME=/opt/data
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN}   # el skill lo usa como x-internal-token al llamar a workers (interpolado desde .env)
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}         # canal Miguel <-> Hermes
+      - TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS} # solo Miguel puede hablarle al bot
+    ports:
+      - "8642:8642"                 # gateway API (uso local/debug, no exponer a internet sin proxy+auth)
+      - "127.0.0.1:6080:6080"       # noVNC: ver a Hermes manejar el browser (http://localhost:6080)
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - jobsearch-net
+    command: gateway run
+
+  # --- Proxy LLM: expone Grok (credenciales SuperGrok OAuth) como API OpenAI-compatible ---
+  # workers le pega acá para scoring/clasificación en vez de a Anthropic, reusando la
+  # suscripción SuperGrok sin API key paga. Comparte hermes_data para leer el mismo auth.json.
+  hermes-proxy:
+    image: nousresearch/hermes-agent:latest
+    container_name: jobsearch-hermes-proxy
+    restart: unless-stopped
+    volumes:
+      - hermes_data:/opt/data   # mismo auth.json que el orquestador (credenciales xAI OAuth)
+    environment:
+      - HERMES_HOME=/opt/data
+    networks:
+      - jobsearch-net
+    # OpenAI-compatible en :8645, solo dentro de jobsearch-net (no publicado a host)
+    command: proxy start --provider xai --host 0.0.0.0 --port 8645
+
+  # --- Workers: Node + Playwright, expone endpoints que Hermes llama por skill/cron ---
+  workers:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile
+    container_name: jobsearch-workers
+    restart: unless-stopped
+    env_file:
+      - .env
+    secrets:
+      - db_password   # el password vive en /run/secrets/db_password (DB_PASSWORD_FILE), nunca en env plano
+    ports:
+      - "127.0.0.1:3000:3000"   # solo localhost: valida /health sin exponer a internet (ver nota de seguridad README)
+    volumes:
+      - ./workers/src:/app/src
+      - playwright_profile:/app/.auth-state   # storageState persistente (sesiones logueadas)
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - jobsearch-net
+    # ejecuta en modo servidor HTTP interno; Hermes dispara cada etapa vía cron -> curl
+    command: node src/server.js
+
+  # --- Estado: Postgres ---
+  db:
+    image: postgres:16-alpine
+    container_name: jobsearch-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jobsearch
+      POSTGRES_USER: jobsearch
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobsearch -d jobsearch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - jobsearch-net
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+
+volumes:
+  hermes_data:
+  db_data:
+  playwright_profile:
+
+networks:
+  jobsearch-net:
+    driver: bridge

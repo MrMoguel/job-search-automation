@@ -1,0 +1,8 @@
+.env
+secrets/db_password.txt
+node_modules/
+*.log
+.auth-state/
+hermes-files/*
+!hermes-files/README.md
+*.bak
