@@ -22,20 +22,26 @@ function getGmailClient() {
  * Devuelve uno de: rejection | interview_request | info_request | auto_ack | unknown
  */
 async function classifyEmail(subject, snippet) {
-  const prompt = `Clasificá este email de respuesta a una postulación laboral en una sola palabra:
-rejection, interview_request, info_request, auto_ack, o unknown.
+  // System prompt con definiciones + regla de desempate. Antes el mismo correo
+  // ("Envío del cuestionario") caía a veces en info_request y a veces en auto_ack;
+  // esto lo hace consistente y sesga los borderline hacia "accionable".
+  const system = `Sos un clasificador de emails de respuesta a postulaciones laborales. Devolvés SOLO una de estas etiquetas, en minúscula y sin explicación:
+- rejection: rechazan al candidato / no avanza.
+- interview_request: lo invitan a una entrevista, llamada o reunión, o le piden coordinar un horario.
+- info_request: le piden al candidato HACER algo para avanzar — completar un cuestionario/formulario/test/assessment, enviar información o documentos, agendar, o responder preguntas.
+- auto_ack: acuse de recibo automático que NO pide ninguna acción ("recibimos tu postulación", "gracias por aplicar", sin próximos pasos).
+- unknown: no calza en ninguna.
 
-Asunto: ${subject}
-Contenido: ${snippet}
+Regla de desempate: si el email pide o adjunta algo que el candidato debe completar / responder / enviar (ej. "Envío del cuestionario", "completá esta evaluación", "necesitamos tus datos"), es info_request, NO auto_ack. Ante la duda entre info_request y auto_ack, elegí info_request.`;
 
-Respondé solo la palabra.`.trim();
+  const prompt = `Asunto: ${subject}\nContenido: ${snippet}\n\nEtiqueta:`;
 
-  // maxTokens holgado aunque la respuesta sea una palabra: grok-4.3 razona antes
-  // de responder y con un presupuesto muy chico devolvería content vacío.
-  const raw = await chatComplete(prompt, { maxTokens: 256 });
-  const text = raw.trim().toLowerCase().replace(/[^a-z_]/g, "");
-  const valid = ["rejection", "interview_request", "info_request", "auto_ack", "unknown"];
-  return valid.includes(text) ? text : "unknown";
+  // temperature 0 = misma entrada, misma etiqueta (antes variaba). maxTokens holgado
+  // porque los modelos reasoning consumen tokens pensando antes de responder.
+  const raw = (await chatComplete(prompt, { system, temperature: 0, maxTokens: 256 })).toLowerCase();
+  // Búsqueda por substring (robusta a texto extra); orden = prioridad de match.
+  const valid = ["interview_request", "info_request", "rejection", "auto_ack", "unknown"];
+  return valid.find((label) => raw.includes(label)) ?? "unknown";
 }
 
 // Clasificaciones que REQUIEREN acción de Miguel para avanzar la postulación.
