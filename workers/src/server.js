@@ -6,6 +6,7 @@ import { runDiscovery } from "./discovery/index.js";
 import { runScoring } from "./scoring/index.js";
 import { runApplication } from "./application/index.js";
 import { runTracking } from "./tracking/index.js";
+import { getNextPosting, markApplied, queueStats } from "./queue/index.js";
 
 const app = express();
 app.use(express.json());
@@ -66,6 +67,40 @@ app.post("/tracking/run", async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("[tracking] error", err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// --- Cola de postulación (discovery-first): el agente pide la próxima oferta ya
+// elegida y reporta el resultado, en vez de buscar a mano. ---
+
+// GET /postings/next?source=getonboard&limit=1  -> próximas ofertas encoladas + score
+app.get("/postings/next", async (req, res) => {
+  try {
+    const rows = await getNextPosting({ source: req.query.source ?? null, limit: req.query.limit });
+    res.json({ count: rows.length, postings: rows });
+  } catch (err) {
+    console.error("[queue] next error", err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// POST /postings/applied  body: { postingId, ok, method?, error? }
+app.post("/postings/applied", async (req, res) => {
+  try {
+    const result = await markApplied(req.body ?? {});
+    res.json(result);
+  } catch (err) {
+    console.error("[queue] applied error", err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// GET /postings/stats  -> conteo por plataforma/estado (monitoreo)
+app.get("/postings/stats", async (_req, res) => {
+  try {
+    res.json({ stats: await queueStats() });
+  } catch (err) {
     res.status(500).json({ error: String(err) });
   }
 });
