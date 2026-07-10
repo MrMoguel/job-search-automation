@@ -1,6 +1,6 @@
 # Contexto del proyecto — leer antes de tocar código
 
-Este es un pipeline de automatización de búsqueda de empleo para Miguel (Chile).
+Este es un pipeline de automatización de búsqueda de empleo, de uso personal (Chile).
 Corre 100% en Docker (hermes + workers + db) para poder migrar de este entorno
 a un servidor Linux sin cambios. El scaffold inicial ya está armado; este archivo
 resume las decisiones de diseño para que el desarrollo continúe consistente con
@@ -24,24 +24,23 @@ lo ya planificado, no para que se reinicie el diseño desde cero.
 - **DB**: Postgres, password vía Docker secret (`secrets/db_password.txt`), nunca en env plano.
 - **Plataformas**: LinkedIn + portales abiertos (Greenhouse/Lever/etc vía sus APIs públicas).
 
-## Guardrail no negociable: LinkedIn
+## Guardrails por plataforma
 
-LinkedIn no tiene API pública de jobs para uso individual. Cualquier automatización ahí
-es scraping con Playwright sobre sesión logueada — el vector que dispara baneos de cuenta.
-Reglas que hay que respetar en cualquier implementación:
+LinkedIn no ofrece una API pública de empleos para uso individual, así que cualquier
+integración depende de la sesión del propio usuario y debe hacerse con criterio y de forma
+conservadora. Principios que el proyecto respeta:
 
-- Nunca headless.
-- Reusar `storageState` persistente (no re-login en cada corrida).
-- Rate limit duro: 5-10 acciones/día máximo, con delays humanos randomizados.
-- Los portales abiertos (Greenhouse, Lever, etc.) sí pueden ser full-auto porque
-  no hay riesgo de cuenta.
+- Nunca headless; ritmos y comportamiento similares a los de una persona.
+- Reusar la sesión persistente del propio usuario (sin re-login en cada corrida).
+- Límites de uso conservadores (pocas acciones por día) con esperas aleatorias.
+- Se opera únicamente sobre la cuenta del propio usuario; nunca datos de terceros.
 
-> **Cambio de política (2026-07-09):** originalmente LinkedIn requería aprobación
-> humana por postulación (`approved_by_human`) y NO full-auto. Tras advertirle el
-> riesgo de baneo, **Miguel decidió, informado, que LinkedIn sea full-auto igual
-> que las demás** (cron `linkedin-3h`, ~8/día). Los demás guardrails (nunca
-> headless, rate limit 5-10/día, delays humanos, reusar sesión, solo Easy Apply)
-> SIGUEN vigentes. El riesgo de baneo es asumido por Miguel como dueño de la cuenta.
+Los portales abiertos (Greenhouse, Lever, etc.) exponen APIs/formularios públicos y no
+dependen de una sesión personal, por lo que su automatización es directa.
+
+> **Uso responsable:** cada plataforma tiene sus propios términos de servicio. El uso de
+> este proyecto —y cualquier consecuencia— es responsabilidad de quien lo corre. Usalo solo
+> sobre tus propias cuentas y de forma respetuosa con cada servicio.
 
 ## Estado actual del scaffold
 

@@ -3,6 +3,15 @@
 Pipeline de automatización de búsqueda de empleo: discovery → scoring → aplicación → tracking.
 Corre 100% en Docker para poder migrar a un equipo Linux sin cambios.
 
+## Aviso
+
+Proyecto **personal y educativo**. Automatiza tareas sobre las **propias cuentas** de quien
+lo usa (portales de empleo, correo), de forma conservadora y respetuosa con cada servicio.
+Cada plataforma tiene sus propios términos de servicio: el uso responsable —y cualquier
+consecuencia— es responsabilidad de quien corre el proyecto. Se entrega **sin garantía** de
+ningún tipo. No está afiliado ni respaldado por LinkedIn, Google ni ninguna de las
+plataformas mencionadas.
+
 ## Arquitectura
 
 - **hermes** — orquestador (imagen oficial `nousresearch/hermes-agent`), maneja cron y el
@@ -46,7 +55,7 @@ curl -H "x-internal-token: $INTERNAL_TOKEN" http://localhost:3000/health
 - [x] Scoring funcional vía Grok (proxy OpenAI-compatible de Hermes, sin API key paga)
 - [ ] Discovery LinkedIn (Playwright + storageState + anti-detección)
 - [ ] Application para portales abiertos (selectores de formulario por mapear)
-- [ ] Application LinkedIn Easy Apply (con guardrails de rate-limit + gate de aprobación humana)
+- [ ] Application LinkedIn Easy Apply (uso conservador: ritmos humanos, límites, solo cuenta propia)
 - [ ] Gmail OAuth flow completo + tracking end-to-end
 - [ ] Skill de Hermes conectado a cron real
 
@@ -55,11 +64,12 @@ curl -H "x-internal-token: $INTERNAL_TOKEN" http://localhost:3000/health
 1. Discovery + scoring de portales abiertos (bajo riesgo, valor inmediato) ← estamos acá
 2. Application automática para portales abiertos
 3. Gmail tracking
-4. LinkedIn discovery + Easy Apply semi-automático con guardrails
+4. LinkedIn discovery + Easy Apply con uso conservador (ritmos humanos, límites, solo cuenta propia)
 
 ## Seguridad
 
 - El puerto 8642 (gateway de Hermes) y 3000 (workers) no deben exponerse a internet
   sin un proxy con autenticación propia.
 - `secrets/db_password.txt` y `.env` están en `.gitignore` — nunca commitear.
-- LinkedIn siempre requiere `approved_by_human = true` antes de postular.
+- LinkedIn se opera de forma conservadora y solo sobre la cuenta del propio usuario;
+  respetá los términos de servicio de cada plataforma.
