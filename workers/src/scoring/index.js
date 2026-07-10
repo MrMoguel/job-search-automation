@@ -82,7 +82,7 @@ export async function runScoring(body) {
 
   try {
     const { rows: postings } = await client.query(
-      `SELECT * FROM postings WHERE status = 'discovered' ORDER BY discovered_at ASC LIMIT 50`
+      `SELECT * FROM postings WHERE status = 'discovered' ORDER BY discovered_at DESC LIMIT 50`
     );
 
     for (const posting of postings) {
