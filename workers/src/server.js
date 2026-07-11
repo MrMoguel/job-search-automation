@@ -2,14 +2,14 @@ import "dotenv/config";
 import express from "express";
 import { pool } from "./lib/db.js";
 
-import { runDiscovery } from "./discovery/index.js";
+import { runDiscovery, ingestPostings } from "./discovery/index.js";
 import { runScoring } from "./scoring/index.js";
 import { runApplication } from "./application/index.js";
 import { runTracking } from "./tracking/index.js";
 import { getNextPosting, markApplied, queueStats } from "./queue/index.js";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "4mb" })); // ingesta de discovery puede traer 100+ ofertas con descripción
 
 // Auth simple entre contenedores (no exponer este puerto a internet)
 function requireInternalToken(req, res, next) {
@@ -37,6 +37,18 @@ app.post("/discovery/run", async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("[discovery] error", err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Ingesta de ofertas ya scrapeadas por el browser (Indeed/Laborum, tras Cloudflare).
+// El scraper CDP corre en Hermes y postea acá; nosotros dedupeamos e insertamos.
+app.post("/discovery/ingest", async (req, res) => {
+  try {
+    const result = await ingestPostings(req.body ?? {});
+    res.json(result);
+  } catch (err) {
+    console.error("[discovery/ingest] error", err);
     res.status(500).json({ error: String(err) });
   }
 });

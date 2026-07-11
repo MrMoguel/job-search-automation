@@ -20,6 +20,8 @@ CREATE TYPE source_platform AS ENUM (
     'getonboard',          -- job board Chile/LATAM (discovery vía API pública; apply requiere login)
     'computrabajo',        -- portal Chile/LATAM (discovery vía scraping HTML público; apply requiere login)
     'remoteok',            -- board remoto global (discovery vía API pública JSON; roles en USD, mayormente inglés)
+    'indeed',              -- portal global/Chile (tras Cloudflare: discovery vía scraper CDP con browser real; apply requiere login)
+    'laborum',             -- portal Chile/LATAM (tras Cloudflare: discovery vía scraper CDP con browser real; apply requiere login)
     'other_open_ats'
 );
 

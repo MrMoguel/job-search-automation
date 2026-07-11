@@ -3,14 +3,31 @@ import { chatComplete, parseJsonLoose, LLM_MODEL } from "../lib/llm.js";
 
 const SCORE_THRESHOLD = Number(process.env.SCORE_THRESHOLD || 70);
 
+// Backpressure de la cola (por plataforma), con histéresis para no scorear de más
+// ni acumular ofertas viejas: se rellena hasta QUEUE_CAP sólo cuando la cola de esa
+// plataforma bajó a QUEUE_REFILL_AT o menos. Entre medio, el scoring de esa fuente
+// se detiene y las ofertas drenan postulándose. Siempre se puntúan las MÁS NUEVAS
+// primero, así las viejas nunca se cuelan a la cola.
+const QUEUE_CAP = Number(process.env.QUEUE_CAP || 20);
+const QUEUE_REFILL_AT = Number(process.env.QUEUE_REFILL_AT || 3);
+
 // System prompt: fija el rol + formato de salida. Tener un system prompt es
 // clave para modelos composer/reasoning, que sin él se portan mal (saludan,
 // alucinan historial). Formato {score,pros,cons} adaptado de jobhound (MIT).
-const SCORING_SYSTEM = `Sos un reclutador experto que evalúa qué tan bien calza una oferta con un candidato.
-Puntuás de 0 a 100 (100 = calce ideal). Sé estricto: penalizá seniority/años de
-experiencia que el candidato no tiene, stacks totalmente ajenos, o idioma requerido
-que no domina. Premiá match real de rol/skills, modalidad y seniority.
-Si la descripción está vacía o es muy corta, puntuá por el título.
+const SCORING_SYSTEM = `Sos un reclutador técnico que puntúa de 0 a 100 qué tan bien calza una oferta con el candidato.
+
+USÁ TODO EL RANGO, no comprimas hacia abajo:
+- 80-100: calce ideal (rol y stack coinciden, seniority alcanzable).
+- 60-79: buen calce (la mayoría del rol/stack coincide; faltan detalles menores).
+- 40-59: calce parcial (algo coincide pero hay brechas reales).
+- 20-39: calce débil. 0-19: no relacionado.
+Si el match técnico es fuerte y la seniority es alcanzable, poné 75+; NO lo dejes en 45.
+
+El candidato es de perfil JUNIOR / SEMI-SENIOR. Por lo tanto:
+- Roles junior, trainee, semi-senior o SIN años exigidos que calcen en tecnología son BUEN calce: premialos, NO los penalices por ser de entrada. Un "Desarrollador Junior Python" que calza es 75+, no 45.
+- Penalizá SOLO: exigencia explícita de mucha experiencia (senior/lead, 6+ años), inglés fluido/avanzado obligatorio, o dominios ajenos al software (automatización industrial/eléctrica, RRHH, ventas, diseño, salud).
+Premiá match real de rol/skills (automatización, IA/LLMs, Python, integraciones/APIs, datos, backend) y modalidad (remoto LATAM o híbrido Chile, en español).
+Si la descripción está vacía o corta, puntuá por el título con criterio; no castigues de más por falta de datos.
 
 FORMATO DE SALIDA (obligatorio, exactamente este JSON, sin texto extra ni markdown):
 {"score": <entero 0-100>, "pros": "<una línea: qué calza>", "cons": "<una línea: qué no calza>"}`;
@@ -79,30 +96,60 @@ export async function runScoring(body) {
   let scored = 0;
   let queued = 0;
   let rejected = 0;
+  const skippedFull = {}; // plataformas que se saltaron por estar llenas/drenando
 
   try {
-    const { rows: postings } = await client.query(
-      `SELECT * FROM postings WHERE status = 'discovered' ORDER BY discovered_at DESC LIMIT 50`
+    // Cuántas hay encoladas por plataforma (para el cap + histéresis).
+    const { rows: qrows } = await client.query(
+      `SELECT source, count(*)::int AS n FROM postings WHERE status='queued_for_application' GROUP BY source`
+    );
+    const queuedBy = {};
+    for (const r of qrows) queuedBy[r.source] = r.n;
+
+    // Plataformas que tienen ofertas sin puntuar.
+    const { rows: srows } = await client.query(
+      `SELECT DISTINCT source FROM postings WHERE status='discovered'`
     );
 
-    for (const posting of postings) {
-      const { score, reasoning } = await scorePosting(posting, profileText);
+    for (const { source } of srows) {
+      let qc = queuedBy[source] ?? 0;
+      // Histéresis: sólo rellená esta plataforma si ya bajó a REFILL_AT o menos.
+      // Si está entre REFILL_AT+1 y CAP (o llena), la dejamos drenar sin scorear.
+      if (qc > QUEUE_REFILL_AT) {
+        skippedFull[source] = qc;
+        continue;
+      }
 
-      await client.query(
-        `INSERT INTO scores (posting_id, score, reasoning, model_used) VALUES ($1, $2, $3, $4)`,
-        [posting.id, score, reasoning, LLM_MODEL]
+      // Rellenar hasta el cap, puntuando las MÁS NUEVAS primero.
+      const { rows: postings } = await client.query(
+        `SELECT * FROM postings WHERE status='discovered' AND source=$1 ORDER BY discovered_at DESC LIMIT 80`,
+        [source]
       );
 
-      const newStatus = score >= SCORE_THRESHOLD ? "queued_for_application" : "rejected_by_score";
-      await client.query(`UPDATE postings SET status = $1 WHERE id = $2`, [newStatus, posting.id]);
+      for (const posting of postings) {
+        if (qc >= QUEUE_CAP) break;
+        const { score, reasoning } = await scorePosting(posting, profileText);
 
-      scored++;
-      if (newStatus === "queued_for_application") queued++;
-      else rejected++;
+        await client.query(
+          `INSERT INTO scores (posting_id, score, reasoning, model_used) VALUES ($1, $2, $3, $4)`,
+          [posting.id, score, reasoning, LLM_MODEL]
+        );
+
+        const newStatus = score >= SCORE_THRESHOLD ? "queued_for_application" : "rejected_by_score";
+        await client.query(`UPDATE postings SET status = $1 WHERE id = $2`, [newStatus, posting.id]);
+
+        scored++;
+        if (newStatus === "queued_for_application") {
+          queued++;
+          qc++;
+        } else {
+          rejected++;
+        }
+      }
     }
   } finally {
     client.release();
   }
 
-  return { scored, queued, rejected, threshold: SCORE_THRESHOLD };
+  return { scored, queued, rejected, threshold: SCORE_THRESHOLD, cap: QUEUE_CAP, skipped_full: skippedFull };
 }

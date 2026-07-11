@@ -59,6 +59,53 @@ async function upsertPosting(client, posting) {
 }
 
 /**
+ * Ingesta de ofertas YA scrapeadas por un cliente externo (el scraper CDP de
+ * Indeed/Laborum, que corre en el contenedor de Hermes porque esas plataformas
+ * están detrás de Cloudflare y sólo cargan con el browser real logueado).
+ *
+ * A diferencia de runDiscovery (que hace el fetch server-side), acá el fetch ya
+ * lo hizo el browser; nosotros sólo dedupeamos e insertamos como 'discovered'
+ * para que el scoring las levante después. Misma tabla, mismo pipeline.
+ *
+ * body esperado: { postings: [{ source, source_job_id, company, title, location?, url, description_raw? }] }
+ * `source` debe ser un valor válido de source_platform (ej. 'indeed', 'laborum').
+ */
+export async function ingestPostings(body) {
+  const items = Array.isArray(body?.postings) ? body.postings : [];
+  if (!items.length) return { inserted: 0, skipped: 0, note: "sin postings en el body" };
+
+  const client = await pool.connect();
+  let inserted = 0;
+  let skipped = 0;
+  const bySource = {};
+  try {
+    for (const raw of items) {
+      // Normalización defensiva: el scraper manda datos del DOM, pueden venir sucios.
+      const posting = {
+        source: String(raw.source ?? "").trim(),
+        source_job_id: String(raw.source_job_id ?? raw.url ?? "").trim().slice(0, 400),
+        company: String(raw.company ?? "").trim().slice(0, 300) || "(sin empresa)",
+        title: String(raw.title ?? "").trim().slice(0, 400),
+        location: raw.location ? String(raw.location).trim().slice(0, 300) : null,
+        url: String(raw.url ?? "").trim(),
+        description_raw: raw.description_raw ? String(raw.description_raw).slice(0, 6000) : null,
+      };
+      if (!posting.source || !posting.title || !posting.url || !posting.source_job_id) {
+        skipped++;
+        continue;
+      }
+      const id = await upsertPosting(client, posting);
+      if (id) inserted++;
+      else skipped++;
+      bySource[posting.source] = (bySource[posting.source] ?? 0) + 1;
+    }
+  } finally {
+    client.release();
+  }
+  return { inserted, skipped, seen_by_source: bySource };
+}
+
+/**
  * Punto de entrada llamado por Hermes vía cron. Enruta por plataforma.
  * body esperado:
  *   {
