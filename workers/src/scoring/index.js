@@ -23,10 +23,10 @@ USÁ TODO EL RANGO, no comprimas hacia abajo:
 - 20-39: calce débil. 0-19: no relacionado.
 Si el match técnico es fuerte y la seniority es alcanzable, poné 75+; NO lo dejes en 45.
 
-El candidato es de perfil JUNIOR / SEMI-SENIOR. Por lo tanto:
-- Roles junior, trainee, semi-senior o SIN años exigidos que calcen en tecnología son BUEN calce: premialos, NO los penalices por ser de entrada. Un "Desarrollador Junior Python" que calza es 75+, no 45.
-- Penalizá SOLO: exigencia explícita de mucha experiencia (senior/lead, 6+ años), inglés fluido/avanzado obligatorio, o dominios ajenos al software (automatización industrial/eléctrica, RRHH, ventas, diseño, salud).
-Premiá match real de rol/skills (automatización, IA/LLMs, Python, integraciones/APIs, datos, backend) y modalidad (remoto LATAM o híbrido Chile, en español).
+El candidato es de perfil JUNIOR / SEMI-SENIOR y quiere DEJAR un soporte N1 con turnos de noche: busca mejor sueldo y horario DIURNO. Por lo tanto:
+- Es BUEN calce (premialo con 70+, NO lo penalices por ser de entrada) CUALQUIER rol técnico donde apliquen sus skills, no solo automatización: desarrollo (backend, fullstack, web, Python, Node), QA / automatización de pruebas / testing, análisis de datos / BI, ingeniería de datos, analista de implementación / funcional, integraciones / APIs, DevOps / cloud junior, RPA / automatización de procesos, IA/LLMs, soporte de aplicaciones diurno. La automatización/IA es un PLUS, NO un requisito: un "Desarrollador Junior", "QA Automation", "Analista de Datos" o "Analista de Implementación" que calce es 70+, no 45.
+- Sumá: modalidad remoto LATAM o híbrido/presencial Chile en español, y horario DIURNO.
+- Penalizá: roles que exijan TURNOS NOCTURNOS o rotativos / 24x7 / on-call nocturno (el candidato se cambia justamente para no hacerlos); exigencia de mucha experiencia (senior/lead, 6+ años); inglés fluido/avanzado obligatorio; y dominios totalmente ajenos al software/datos/TI (ventas, salud asistencial, RRHH, diseño gráfico, automatización industrial/eléctrica de terreno).
 Si la descripción está vacía o corta, puntuá por el título con criterio; no castigues de más por falta de datos.
 
 FORMATO DE SALIDA (obligatorio, exactamente este JSON, sin texto extra ni markdown):

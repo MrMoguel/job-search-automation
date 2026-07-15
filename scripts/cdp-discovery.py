@@ -29,10 +29,14 @@ DRY = "--dry" in sys.argv
 QUERIES = {
     "indeed":  ["automatizacion", "rpa", "python", "analista de datos", "ingeniero de datos",
                 "desarrollador python", "backend", "inteligencia artificial", "desarrollador",
-                "programador", "ingeniero de software", "analista programador"],
+                "programador", "ingeniero de software", "analista programador",
+                "qa automatizacion", "tester qa", "fullstack", "desarrollador web",
+                "analista de implementacion", "analista funcional", "devops", "soporte de aplicaciones"],
     "laborum": ["automatizacion", "rpa", "python", "analista-de-datos", "ingenieria-de-datos",
                 "desarrollador-python", "backend", "inteligencia-artificial", "desarrollador",
-                "programador", "ingeniero-de-software", "analista-programador"],
+                "programador", "ingeniero-de-software", "analista-programador",
+                "qa-automatizacion", "tester", "fullstack", "desarrollador-web",
+                "analista-de-implementacion", "analista-funcional", "devops", "soporte-de-aplicaciones"],
 }
 
 # Cuántas páginas por búsqueda (más páginas = más ofertas nuevas por corrida).
