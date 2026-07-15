@@ -27,15 +27,26 @@ DRY = "--dry" in sys.argv
 
 # Búsquedas por plataforma. Indeed usa querystring; Laborum usa slug con guiones.
 QUERIES = {
-    "indeed":  ["automatizacion", "rpa", "python", "analista de datos", "ingeniero de datos"],
-    "laborum": ["automatizacion", "rpa", "python", "analista-de-datos", "ingenieria-de-datos"],
+    "indeed":  ["automatizacion", "rpa", "python", "analista de datos", "ingeniero de datos",
+                "desarrollador python", "backend", "inteligencia artificial", "desarrollador",
+                "programador", "ingeniero de software", "analista programador"],
+    "laborum": ["automatizacion", "rpa", "python", "analista-de-datos", "ingenieria-de-datos",
+                "desarrollador-python", "backend", "inteligencia-artificial", "desarrollador",
+                "programador", "ingeniero-de-software", "analista-programador"],
 }
 
-def search_url(platform, q):
+# Cuántas páginas por búsqueda (más páginas = más ofertas nuevas por corrida).
+PAGES = int(os.environ.get("DISCOVERY_PAGES", "1"))
+
+def search_url(platform, q, page=0):
     if platform == "indeed":
-        return "https://cl.indeed.com/jobs?" + urllib.parse.urlencode({"q": q, "l": "Santiago"})
-    # laborum
-    return f"https://www.laborum.cl/empleos-busqueda-{q}.html"
+        params = {"q": q, "l": "Santiago"}
+        if page:
+            params["start"] = page * 10  # Indeed pagina de a 10
+        return "https://cl.indeed.com/jobs?" + urllib.parse.urlencode(params)
+    # laborum: la paginación va en el path (…-<q>.html?page=N funciona en Laborum)
+    base = f"https://www.laborum.cl/empleos-busqueda-{q}.html"
+    return f"{base}?page={page+1}" if page else base
 
 # --- Extracción en el DOM (corre dentro de la página vía Runtime.evaluate) ---
 
@@ -151,13 +162,16 @@ async def main():
     per = {}
     for platform, queries in QUERIES.items():
         for q in queries:
-            try:
-                got = await scrape_one(search_url(platform, q), JS[platform])
-            except Exception as e:
-                print(f"[warn] {platform}/{q}: {e}", file=sys.stderr)
-                got = []
-            per[platform] = per.get(platform, 0) + len(got)
-            allp.extend(got)
+            for page in range(PAGES):
+                try:
+                    got = await scrape_one(search_url(platform, q, page), JS[platform])
+                except Exception as e:
+                    print(f"[warn] {platform}/{q}/p{page}: {e}", file=sys.stderr)
+                    got = []
+                per[platform] = per.get(platform, 0) + len(got)
+                allp.extend(got)
+                if not got:
+                    break  # sin resultados en esta página → no seguir paginando esta búsqueda
     # Dedup global por (source, source_job_id)
     uniq = {}
     for p in allp:

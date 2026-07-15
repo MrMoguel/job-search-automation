@@ -94,6 +94,8 @@ function mapJob(job, company) {
  *   maxPages — cuántas páginas recorrer por query (rate-limit friendly)
  * @returns {Promise<object[]>} postings listos para upsert
  */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 export async function discoverGetOnBoard({ queries = [], perPage = 50, maxPages = 1 } = {}) {
   const postings = [];
   const seen = new Set(); // dedupe intra-corrida (un job puede matchear varias queries)
@@ -101,11 +103,23 @@ export async function discoverGetOnBoard({ queries = [], perPage = 50, maxPages 
   for (const query of queries) {
     for (let page = 1; page <= maxPages; page++) {
       const url = `${API_BASE}/search/jobs?query=${encodeURIComponent(query)}&per_page=${perPage}&page=${page}`;
-      const res = await fetch(url, {
-        headers: { "User-Agent": UA, Accept: "application/json" },
-      });
+      let res;
+      try {
+        res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
+      } catch (e) {
+        console.warn(`[getonboard] red "${query}" p${page}: ${e}`);
+        break; // problema de red en esta query: saltarla, seguir con las demás
+      }
+      // 429/rate-limit u otro error: NO abortar toda la discovery — saltar esta query
+      // y seguir. El discovery corre seguido, así que lo que se saltó se recupera después.
+      if (res.status === 429) {
+        console.warn(`[getonboard] 429 en "${query}" p${page}, salto la query`);
+        await sleep(1500);
+        break;
+      }
       if (!res.ok) {
-        throw new Error(`GetOnBoard search "${query}" p${page}: HTTP ${res.status}`);
+        console.warn(`[getonboard] HTTP ${res.status} en "${query}" p${page}, salto`);
+        break;
       }
       const body = await res.json();
       const jobs = body.data ?? [];
@@ -117,6 +131,7 @@ export async function discoverGetOnBoard({ queries = [], perPage = 50, maxPages 
         postings.push(mapJob(job, company));
       }
 
+      await sleep(400); // gentil con el rate-limit de GetOnBoard entre requests
       if (jobs.length < perPage) break; // última página de esta query
     }
   }

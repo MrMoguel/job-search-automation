@@ -3,13 +3,13 @@ import { chatComplete, parseJsonLoose, LLM_MODEL } from "../lib/llm.js";
 
 const SCORE_THRESHOLD = Number(process.env.SCORE_THRESHOLD || 70);
 
-// Backpressure de la cola (por plataforma), con histéresis para no scorear de más
-// ni acumular ofertas viejas: se rellena hasta QUEUE_CAP sólo cuando la cola de esa
-// plataforma bajó a QUEUE_REFILL_AT o menos. Entre medio, el scoring de esa fuente
-// se detiene y las ofertas drenan postulándose. Siempre se puntúan las MÁS NUEVAS
-// primero, así las viejas nunca se cuelan a la cola.
-const QUEUE_CAP = Number(process.env.QUEUE_CAP || 20);
-const QUEUE_REFILL_AT = Number(process.env.QUEUE_REFILL_AT || 3);
+// Backpressure de la cola (por plataforma): se mantiene la cola LLENA hasta
+// QUEUE_CAP para que las postulaciones nunca se queden sin material. Se rellena
+// en cada corrida siempre que la cola esté por debajo del cap (sin esperar a que
+// se vacíe), puntuando las MÁS NUEVAS primero — así las viejas no se cuelan y el
+// ritmo de postulación se sostiene. El cap evita acumular ofertas sin límite.
+const QUEUE_CAP = Number(process.env.QUEUE_CAP || 25);
+const QUEUE_REFILL_AT = Number(process.env.QUEUE_REFILL_AT || QUEUE_CAP - 1);
 
 // System prompt: fija el rol + formato de salida. Tener un system prompt es
 // clave para modelos composer/reasoning, que sin él se portan mal (saludan,
@@ -113,9 +113,10 @@ export async function runScoring(body) {
 
     for (const { source } of srows) {
       let qc = queuedBy[source] ?? 0;
-      // Histéresis: sólo rellená esta plataforma si ya bajó a REFILL_AT o menos.
-      // Si está entre REFILL_AT+1 y CAP (o llena), la dejamos drenar sin scorear.
-      if (qc > QUEUE_REFILL_AT) {
+      // Mantener la cola llena: sólo se salta si ya está en el cap. Mientras esté
+      // por debajo, se rellena en cada corrida para que las postulaciones nunca
+      // se queden sin material.
+      if (qc >= QUEUE_CAP) {
         skippedFull[source] = qc;
         continue;
       }

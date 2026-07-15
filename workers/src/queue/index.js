@@ -25,7 +25,10 @@ export async function getNextPosting({ source = null, limit = 1 } = {}) {
        ) s ON true
       WHERE p.status = 'queued_for_application'
         AND ($1::source_platform IS NULL OR p.source = $1::source_platform)
-      ORDER BY s.score DESC, p.discovered_at ASC
+      -- Servir las MÁS NUEVAS primero (menos chance de estar vencidas), y entre
+      -- fechas cercanas la de mayor score. El apply recorre varias y saltea las
+      -- cerradas, así que priorizar frescura maximiza postulaciones exitosas.
+      ORDER BY p.discovered_at DESC, s.score DESC
       LIMIT $2`,
     [source, Math.max(1, Math.min(20, Number(limit) || 1))]
   );
