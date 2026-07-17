@@ -6,7 +6,7 @@ import { runDiscovery, ingestPostings } from "./discovery/index.js";
 import { runScoring } from "./scoring/index.js";
 import { runApplication } from "./application/index.js";
 import { runTracking } from "./tracking/index.js";
-import { getNextPosting, markApplied, queueStats } from "./queue/index.js";
+import { getNextPosting, markApplied, queueStats, logExternalApplication } from "./queue/index.js";
 
 const app = express();
 app.use(express.json({ limit: "4mb" })); // ingesta de discovery puede traer 100+ ofertas con descripción
@@ -104,6 +104,18 @@ app.post("/postings/applied", async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("[queue] applied error", err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// POST /applications/log-external  body: { source, title, company, url }
+// Registra postulaciones hechas en el browser sin pasar por la cola (LinkedIn).
+app.post("/applications/log-external", async (req, res) => {
+  try {
+    const result = await logExternalApplication(req.body ?? {});
+    res.json(result);
+  } catch (err) {
+    console.error("[queue] log-external error", err);
     res.status(500).json({ error: String(err) });
   }
 });

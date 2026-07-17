@@ -68,6 +68,40 @@ export async function markApplied({ postingId, ok, method = "browser_auto", erro
   }
 }
 
+/**
+ * Registra una postulación hecha FUERA de la cola (ej. LinkedIn, que es
+ * end-to-end en el browser y no pasa por discovery/scoring). Inserta el posting
+ * como 'applied' y su fila en applications, así queda medible en las stats.
+ * @param {{ source: string, title?: string, company?: string, url: string, method?: string }} opts
+ */
+export async function logExternalApplication({ source, title, company, url, method = "browser_auto" }) {
+  if (!source || !url) throw new Error("logExternalApplication: falta source o url");
+  const jobId = String(url).trim().slice(0, 400);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `INSERT INTO postings (source, source_job_id, company, title, url, status)
+       VALUES ($1, $2, $3, $4, $5, 'applied')
+       ON CONFLICT (source, source_job_id) DO UPDATE SET status = 'applied'
+       RETURNING id`,
+      [source, jobId, String(company || "(sin empresa)").slice(0, 300), String(title || "(sin titulo)").slice(0, 400), url]
+    );
+    const postingId = rows[0].id;
+    await client.query(
+      `INSERT INTO applications (posting_id, applied_at, method) VALUES ($1, now(), $2)`,
+      [postingId, method]
+    );
+    await client.query("COMMIT");
+    return { logged: true, postingId };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 /** Resumen de la cola por estado y plataforma (para monitoreo). */
 export async function queueStats() {
   const { rows } = await pool.query(
