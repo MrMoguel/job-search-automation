@@ -6,3 +6,4 @@ node_modules/
 hermes-files/*
 !hermes-files/README.md
 *.bak
+secrets/auth-state/

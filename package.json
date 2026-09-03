@@ -1,0 +1,13 @@
+{
+  "name": "jobsearch-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Scripts de host del pipeline (corren fuera de Docker: ver scripts/)",
+  "scripts": {
+    "auth-state": "node scripts/export-auth-state.js"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}
