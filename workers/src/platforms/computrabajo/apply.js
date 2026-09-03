@@ -1,104 +1,292 @@
 /**
- * Apply Computrabajo — stub determinista.
+ * Apply Computrabajo — postulación determinista vía GET.
  *
- * Discovery es HTML público (cheerio); la POSTULACIÓN requiere sesión de cuenta
- * propia (storageState) + Playwright. Usa ApplicantProfile sin LLM por job.
+ * Hallazgo (fixtures/META.md): no hay form. El botón Postularme lleva
+ * `data-href-offer-apply`; navegar a esa URL = postular. El CV es el del
+ * perfil del portal (sin fill / setInputFiles).
  *
- * Scaffolding: no aplica en prod. Valida precondiciones y retorna stub /
- * NotImplemented — selectores reales en NOTES.md (TBD).
+ * ⚠️ Cualquier corrida sin dryRun envía una postulación REAL.
  */
 
 import { existsSync } from "node:fs";
-import {
-  loadApplicantProfile,
-  profileToFormValues,
-  resolveFieldValue,
-} from "../../lib/applicantProfile.js";
+import { chromium } from "playwright";
+import { loadApplicantProfile } from "../../lib/applicantProfile.js";
 
-/** Path al storageState de la cuenta propia. */
-export function resolveStorageStatePath(env = process.env) {
-  return (
-    env.COMPUTRABAJO_STORAGE_STATE ||
-    env.COMPUTRABAJO_AUTH_STATE ||
-    "/app/.auth-state/computrabajo.json"
-  );
+/** Selector del CTA Postularme (fixture offer-page.html). */
+export const APPLY_LINK_SELECTOR = "a[data-href-offer-apply]";
+
+/** Título de confirmación (fixture apply-confirmation.html). */
+export const SUCCESS_TITLE_RE = /Aplicación enviada/i;
+
+const HUMAN_DELAY_MS = {
+  min: Number(process.env.COMPUTRABAJO_DELAY_MIN_MS || 800),
+  max: Number(process.env.COMPUTRABAJO_DELAY_MAX_MS || 2200),
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export function humanDelayMs() {
+  const lo = Math.min(HUMAN_DELAY_MS.min, HUMAN_DELAY_MS.max);
+  const hi = Math.max(HUMAN_DELAY_MS.min, HUMAN_DELAY_MS.max);
+  return lo + Math.floor(Math.random() * (hi - lo + 1));
+}
+
+export async function humanPause() {
+  await sleep(humanDelayMs());
 }
 
 /**
- * @param {string} [storageStatePath]
+ * Path al storageState de la cuenta propia.
+ * Preferencia: COMPUTRABAJO_STORAGE_STATE → secrets/auth-state → /app/.auth-state
  */
+export function resolveStorageStatePath(env = process.env) {
+  if (env.COMPUTRABAJO_STORAGE_STATE) return env.COMPUTRABAJO_STORAGE_STATE;
+  if (env.COMPUTRABAJO_AUTH_STATE) return env.COMPUTRABAJO_AUTH_STATE;
+  const hostPath = "secrets/auth-state/computrabajo.json";
+  if (existsSync(hostPath)) return hostPath;
+  return "/app/.auth-state/computrabajo.json";
+}
+
 export function assertOwnStorageState(
   storageStatePath = resolveStorageStatePath()
 ) {
   if (!storageStatePath || !existsSync(storageStatePath)) {
     throw new Error(
-      `Computrabajo apply: falta storageState propio en ${storageStatePath}. ` +
-        "Exportá la sesión una vez (login manual) y reutilizala."
+      `Computrabajo apply: falta storageState en ${storageStatePath}. ` +
+        "Corré: node scripts/export-auth-state.js --platform=computrabajo"
     );
   }
   return storageStatePath;
 }
 
 /**
+ * Error tipado para sesión rota en candidato.* (/acceso/ o redirect loop).
+ */
+export class SesionCaidaError extends Error {
+  /**
+   * @param {string} detail
+   */
+  constructor(detail) {
+    super(
+      `SESION_CAIDA: ${detail}. Re-exportá la sesión con: ` +
+        "node scripts/export-auth-state.js --platform=computrabajo " +
+        "(no reintentar en loop)."
+    );
+    this.name = "SesionCaidaError";
+    this.code = "SESION_CAIDA";
+  }
+}
+
+function decodeHtmlAttr(url) {
+  return String(url || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .trim();
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {Error} [err]
+ */
+function detectSesionCaida(page, err) {
+  const msg = String(err?.message || err || "");
+  if (/ERR_TOO_MANY_REDIRECTS/i.test(msg)) {
+    return new SesionCaidaError("ERR_TOO_MANY_REDIRECTS");
+  }
+  try {
+    const url = page.url();
+    if (/\/acceso\//i.test(url)) {
+      return new SesionCaidaError(`redirigió a ${url}`);
+    }
+  } catch {
+    // page may be closed
+  }
+  return null;
+}
+
+/**
  * @typedef {object} ApplyResult
- * @property {"stub"|"applied"|"skipped"|"failed"} status
+ * @property {"dry_run"|"applied"|"already_applied"|"skipped"|"failed"} status
  * @property {string} [reason]
- * @property {Record<string, string>} [formValuesPreview]
+ * @property {string} [applyUrl]
+ * @property {string} [confirmationTitle]
+ * @property {string} [code]
  */
 
 /**
- * Stub de postulación Computrabajo. Valida perfil (+ sesión si hay page);
- * no submitea.
+ * Postula a una oferta Computrabajo.
  *
  * @param {{
  *   posting: { id?: number|string, url: string, title?: string, company?: string },
- *   profile?: import('../../lib/applicantProfile.js').ApplicantProfile,
- *   page?: import('playwright').Page,
+ *   profile?: import('../../lib/applicantProfile.js').ApplicantProfile | null,
+ *   dryRun?: boolean,
+ *   headless?: boolean,
+ *   storageStatePath?: string,
+ *   validateProfile?: boolean,
  * }} args
  * @returns {Promise<ApplyResult>}
  */
 export async function applyComputrabajo({
   posting,
   profile = null,
-  page = null,
+  dryRun = false,
+  headless = false,
+  storageStatePath = null,
+  validateProfile = false,
 } = {}) {
   if (!posting?.url) {
     throw new Error("applyComputrabajo: posting.url es requerido");
   }
 
-  const applicant = profile || loadApplicantProfile();
-  const formValues = profileToFormValues(applicant);
-
-  // Smoke del contrato compartido (aliases típicos ES del formulario).
-  void resolveFieldValue(applicant, "nombre");
-  void resolveFieldValue(applicant, "correo");
-  void resolveFieldValue(applicant, "telefono");
-  void resolveFieldValue(applicant, "cv");
-
-  if (!page) {
-    return {
-      status: "stub",
-      reason:
-        "Scaffolding: sin Page. Wiring real usará storageState + click Postularme + mapa NOTES.md.",
-      formValuesPreview: {
-        email: formValues.email,
-        full_name: formValues.full_name,
-        phone: formValues.phone,
-        resume_path: formValues.resume_path ? "(set)" : "",
-      },
-    };
+  // ApplicantProfile: sin fill en este flujo; opcional como precóndición.
+  if (validateProfile) {
+    profile || loadApplicantProfile();
   }
 
-  assertOwnStorageState();
-
-  // TODO(computrabajo): flujo determinista
-  // 1) page.goto(posting.url)
-  // 2) click Postularme / Postular
-  // 3) fill por mapa (NOTES.md) + setInputFiles(resume)
-  // 4) preguntas sin alias → skip + log (no inventar)
-  // 5) delays humanos; no generar código por job
-  throw new Error(
-    `applyComputrabajo: NotImplemented — stub listo para ${posting.url} ` +
-      `(perfil: ${applicant.email}). Ver NOTES.md para selectores.`
+  const statePath = assertOwnStorageState(
+    storageStatePath || resolveStorageStatePath()
   );
+
+  if (headless === true) {
+    // Preferible false (anti-bot / handshake candidato.*); permitir override explícito.
+  }
+
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: Boolean(headless) });
+    const context = await browser.newContext({ storageState: statePath });
+    const page = await context.newPage();
+
+    await humanPause();
+    try {
+      await page.goto(posting.url, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+    } catch (err) {
+      const sesion = detectSesionCaida(page, err);
+      if (sesion) throw sesion;
+      throw err;
+    }
+
+    const sesionAfterGoto = detectSesionCaida(page);
+    if (sesionAfterGoto) throw sesionAfterGoto;
+
+    await humanPause();
+
+    // Ya postulado: en el fixture el CTA alternativo es a.postulated (sin .hide).
+    const alreadyBtn = page.locator("a.postulated:not(.hide)").first();
+    if (await alreadyBtn.isVisible().catch(() => false)) {
+      return {
+        status: "already_applied",
+        reason: "UI muestra estado Postulado",
+      };
+    }
+
+    const link = page.locator(APPLY_LINK_SELECTOR).first();
+    const count = await page.locator(APPLY_LINK_SELECTOR).count();
+    if (count === 0) {
+      throw new Error(
+        `applyComputrabajo: no se encontró ${APPLY_LINK_SELECTOR} en ${posting.url}`
+      );
+    }
+
+    const rawHref = await link.getAttribute("data-href-offer-apply");
+    const applyUrl = decodeHtmlAttr(rawHref);
+    if (!applyUrl || !/^https?:\/\//i.test(applyUrl)) {
+      throw new Error(
+        "applyComputrabajo: data-href-offer-apply vacío o inválido"
+      );
+    }
+
+    if (dryRun) {
+      // Cortar ANTES de navegar — navegar = postular de verdad.
+      return {
+        status: "dry_run",
+        reason:
+          "dryRun: no se navegó a data-href-offer-apply (postulación real omitida)",
+        applyUrl,
+      };
+    }
+
+    await humanPause();
+    try {
+      await page.goto(applyUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+    } catch (err) {
+      const sesion = detectSesionCaida(page, err);
+      if (sesion) throw sesion;
+      throw err;
+    }
+
+    const sesionAfterApply = detectSesionCaida(page);
+    if (sesionAfterApply) throw sesionAfterApply;
+
+    await humanPause();
+    const title = await page.title();
+    if (!SUCCESS_TITLE_RE.test(title)) {
+      return {
+        status: "failed",
+        reason: `título inesperado tras apply: ${title}`,
+        applyUrl,
+        confirmationTitle: title,
+      };
+    }
+
+    return {
+      status: "applied",
+      applyUrl,
+      confirmationTitle: title,
+    };
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * CLI mínimo: node apply.js --url=... [--dry-run] [--headless]
+ * Cada corrida sin --dry-run postula de verdad.
+ */
+async function mainCli(argv = process.argv.slice(2)) {
+  const opts = Object.fromEntries(
+    argv
+      .filter((a) => a.startsWith("--"))
+      .map((a) => {
+        const [k, ...rest] = a.replace(/^--/, "").split("=");
+        return [k, rest.length ? rest.join("=") : true];
+      })
+  );
+  const url = opts.url || opts.offer;
+  if (!url || url === true) {
+    console.error(
+      "Uso: node workers/src/platforms/computrabajo/apply.js --url=<offerUrl> [--dry-run] [--headless]\n" +
+        "⚠️ Sin --dry-run la navegación a data-href-offer-apply ES una postulación real."
+    );
+    process.exitCode = 2;
+    return;
+  }
+  const result = await applyComputrabajo({
+    posting: { url: String(url) },
+    dryRun: Boolean(opts["dry-run"] || opts.dryRun),
+    headless: Boolean(opts.headless),
+    validateProfile: false,
+  });
+  console.log(JSON.stringify(result, null, 2));
+  if (result.status === "failed") process.exitCode = 1;
+}
+
+const isDirectRun =
+  typeof process !== "undefined" &&
+  process.argv[1] &&
+  /computrabajo[/\\]apply\.js$/.test(process.argv[1]);
+
+if (isDirectRun) {
+  mainCli().catch((err) => {
+    console.error(err?.code === "SESION_CAIDA" ? err.message : err);
+    process.exitCode = err?.code === "SESION_CAIDA" ? 3 : 1;
+  });
 }
