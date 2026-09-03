@@ -1,30 +1,46 @@
-# Laborum platform — notas de selectores
+# Laborum platform — notas de discovery / selectores
 
-Scaffolding (asignación #1). **No apply en prod** hasta mapear UI real y wiring en `application/index.js` (eso lo abre Don Jose).
+Portal: [laborum.cl](https://www.laborum.cl) (Chile, Navent / SITE_ID `BMCL`). Playwright determinista — **sin LLM por postulación**.
 
-Portal: [laborum.cl](https://www.laborum.cl) (Chile). Playwright determinista — **sin LLM por postulación**.
+## Discovery (implementado)
 
-## Discovery (estado scaffolding)
-
-| Aspecto | Nota |
+| Aspecto | Real (capturado) |
 | --- | --- |
-| URL búsqueda típica | `https://www.laborum.cl/empleo/?q=...` (confirmar query params contra DOM/HTML real) |
-| Método previsto | HTML público con cheerio **si** el listado no exige login; si hay wall/anti-bot → Playwright + `storageState` |
-| Shape salida | `source=laborum`, `source_job_id`, `company`, `title`, `location`, `url`, `description_raw` |
-| Selectores cards | **TBD** — capturar DOM/HTML real antes de fijar CSS |
-| Dedupe | `source_job_id` estable (id de oferta o hash corto de URL canónica) |
-| Rate | delay entre requests (estilo Computrabajo ~1.5s) |
+| HTML `/empleo/?q=...` | **SPA shell** — `#root` + loader; **cero cards** de ofertas en HTML estático. Fixture: `fixtures/listing-empleo-spa-shell.html` |
+| Listado público | `POST https://www.laborum.cl/api/avisos/searchV2?pageSize=&page=&sort=RELEVANTES` |
+| Header obligatorio | `x-site-id: BMCL` (`window.SITE_ID` en `/candidate/js/keys.js`) |
+| Body | `{ "filtros": [], "query": "<término>", "internacional": false }` |
+| Paginación | **`page` es 0-indexed**. Con `page=1` a veces `content: []` aunque `total > 0` |
+| Login | No requerido para searchV2 |
+| Fixture API | `fixtures/searchV2-python-page0.json` (query `python`, captura live) |
 
-`discovery.js` hoy es stub: firma estable + lista vacía hasta fijar selectores. No cablear en `discovery/index.js` aún.
+### Mapeo de campos (desde fixture real)
 
-## Apply — requiere sesión
+| Campo API (`content[]`) | Posting repo |
+| --- | --- |
+| `id` | `source_job_id` (+ URL) |
+| `titulo` | `title` |
+| `empresa` / `confidencial` | `company` |
+| `localizacion` | `location` |
+| `detalle` | `description_raw` (truncado) |
+| — | `source = "laborum"` |
+| — | `url = https://www.laborum.cl/empleos/-{id}.html` (verificado 200; slug opcional) |
 
-Postulación en Laborum tipicamente pide cuenta propia:
+No se usan selectores CSS de listado (no existen en el HTML estático). **No inventar CSS.**
+
+### Fuera de alcance de este PR
+
+- No cablea `workers/src/discovery/index.js` ni `application/index.js`.
+- No apply real (stub intacto).
+- Filtros por provincia / detalle `fichaAviso*` (algunos paths 403 Cloudflare desde DC).
+
+## Apply — requiere sesión (hold)
+
 - `LABORUM_STORAGE_STATE` (default `/app/.auth-state/laborum.json`)
-- Preferible `headless: false` en la 1ª implementación real (anti-bot / captcha)
-- Delays humanos; cero código generado por job
+- Selectores del form Postular: **TBD** con fixture/DOM logueado (asignación posterior)
+- Preferible `headless: false`; delays humanos; sin LLM por job
 
-## Mapa de campos (contrato ApplicantProfile)
+## Mapa de campos apply (contrato ApplicantProfile)
 
 Usar `loadApplicantProfile` / `profileToFormValues` / `resolveFieldValue` desde `workers/src/lib/applicantProfile.js`.
 
@@ -40,20 +56,9 @@ Usar `loadApplicantProfile` / `profileToFormValues` / `resolveFieldValue` desde 
 | LinkedIn / Perfil | `linkedin` |
 | Adjuntar CV / Currículum | `resume_path` (`setInputFiles`) |
 | Carta / Presentación / Mensaje | `cover_letter` |
-| Preguntas de selección (texto libre) | `customAnswers[<label>]` o skip + log |
+| Preguntas sin alias | `customAnswers[<label>]` o skip + log |
 
-Selectores CSS/ARIA del formulario "Postular": **TBD** — actualizar solo cuando se capture el DOM logueado.
-
-## Flujo futuro (determinista)
-
-1. Launch Playwright con `storageState` de cuenta propia (no re-login en cada corrida).
-2. `page.goto(posting.url)` → click **Postular** / equivalente.
-3. Rellenar campos vía mapa + `resolveFieldValue`; CV con `setInputFiles(resume_path)`.
-4. Preguntas sin alias conocido → **skip + log** (no inventar respuestas).
-5. Pausa humana entre acciones; no auto-submit masivo.
-
-## Fuera de alcance de este PR
+## Fuera de alcance general
 
 - No edita `workers/src/application/index.js` ni `workers/src/lib/`.
-- No cablea discovery en `workers/src/discovery/index.js`.
 - No merge a main (revisión Don Jose).
