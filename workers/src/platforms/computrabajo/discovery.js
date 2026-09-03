@@ -4,7 +4,8 @@
  * Computrabajo NO tiene API pública, pero el LISTADO de ofertas es HTML público
  * accesible sin login (`/ofertas-de-trabajo/?q=...`). Por eso el discovery es
  * bajo riesgo y vive acá, en workers — a diferencia de la POSTULACIÓN, que sí
- * requiere sesión logueada y la hace el agente (Janna) con su browser.
+ * requiere sesión logueada y corre en ./apply.js con Playwright determinista +
+ * storageState propio (ver README, "Sesiones de plataformas").
  *
  * Selectores y patrón de URL adaptados del scraper de jobhound
  * (github.com/jonach1998/jobhound, MIT) — que los tiene validados con tests.
