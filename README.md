@@ -75,19 +75,31 @@ que el script imprime: `touch secrets/auth-state/.listo-<key>`.
 | `indeed` | Indeed Chile | https://cl.indeed.com |
 | `gob` | Empleos Públicos | https://www.empleospublicos.cl |
 
-En Docker, los adapters leen `/app/.auth-state/<key>.json` (ver `*_STORAGE_STATE` en cada
-`platforms/<key>/NOTES.md`). Para usar estos archivos, montalos en el servicio `workers`:
+### Cómo los consume `workers`
+
+Cada adapter resuelve el path con `resolveStorageStatePath()`, que respeta una env var por
+plataforma y cae al default de Docker:
+
+| plataforma | env var (override) | default |
+| --- | --- | --- |
+| linkedin | `LINKEDIN_STORAGE_STATE` | `/app/.auth-state/linkedin.json` |
+| computrabajo | `COMPUTRABAJO_STORAGE_STATE` | `/app/.auth-state/computrabajo.json` |
+| laborum | `LABORUM_STORAGE_STATE` | `/app/.auth-state/laborum.json` |
+| indeed | `INDEED_STORAGE_STATE` | `/app/.auth-state/indeed.json` |
+| gob | `GOB_STORAGE_STATE` | `/app/.auth-state/gob.json` |
+
+**Con Docker**: montar el *directorio* completo, no archivo por archivo — así agregar o
+regenerar una sesión no toca el compose. Reemplaza al volume `playwright_profile` (dos
+mounts no pueden convivir en el mismo path):
 
 ```yaml
     volumes:
       - ./workers/src:/app/src
-      - playwright_profile:/app/.auth-state
-      - ./secrets/auth-state/linkedin.json:/app/.auth-state/linkedin.json:ro
-      - ./secrets/auth-state/computrabajo.json:/app/.auth-state/computrabajo.json:ro
-      - ./secrets/auth-state/laborum.json:/app/.auth-state/laborum.json:ro
-      - ./secrets/auth-state/indeed.json:/app/.auth-state/indeed.json:ro
-      - ./secrets/auth-state/gob.json:/app/.auth-state/gob.json:ro
+      - ./secrets/auth-state:/app/.auth-state:ro
 ```
+
+**Sin Docker** (workers con node en el host): setear las env vars a los paths locales
+absolutos — están comentadas en `.env.example`.
 
 > Estos JSON son **credenciales de sesión**: `secrets/auth-state/` está en `.gitignore`,
 > se guardan con `chmod 600` y nunca se commitean. Se usan solo sobre cuentas propias; si
